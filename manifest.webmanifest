@@ -1,0 +1,15 @@
+{
+  "name": "Editless Remote",
+  "short_name": "Editless",
+  "description": "Stand-in for the Editless 12-key main and 6-key mini remotes: marks, voice notes, export.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0c10",
+  "theme_color": "#0b0c10",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
