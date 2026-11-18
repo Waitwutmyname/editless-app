@@ -766,7 +766,7 @@ if (typeof importScripts === 'function') {
 <script>
 (() => {
   'use strict';
-  const VERSION = '2.3.2';
+  const VERSION = '2.3.3';
   const VERSION_DATE = '2026-11-17';
   const $ = id => document.getElementById(id);
   const pad = (n, w = 2) => String(n).padStart(w, '0');
@@ -1469,8 +1469,11 @@ if (typeof importScripts === 'function') {
   function micConstraints(id) {
     // 2.3.1: 'normal' (default) lets the phone do its usual voice processing (auto gain, noise and
     // echo reduction) so notes come out at a normal loudness. 'raw' turns all of it off (quiet, untouched).
-    const on = settings.micMode !== 'raw';
-    return { audio: { echoCancellation: on, noiseSuppression: on, autoGainControl: on,
+    // 2.3.3: 'normal' no longer asks for echo cancellation. On Android, echo cancellation is what puts
+    // the phone into "call" mode (call volume icon), which drags Bluetooth earbuds down to call quality,
+    // and a voice note has nothing to cancel anyway. 'call' is the old 2.3.1 setting (all three on).
+    const m = settings.micMode, on = m !== 'raw';
+    return { audio: { echoCancellation: m === 'call', noiseSuppression: on, autoGainControl: on,
       sampleRate: { ideal: 48000 }, sampleSize: { ideal: 24 }, ...(id ? { deviceId: { exact: id } } : {}) }, video: false };
   }
   function getStream() {
@@ -2313,7 +2316,7 @@ if (typeof importScripts === 'function') {
       <label class="set">Hold time (tap vs hold)<select data-s="holdMs">${[400, 500, 600, 700, 800].map(v => opt(v, settings.holdMs, (v / 1000) + ' s' + (v === 600 ? ' (prototype)' : ''))).join('')}</select></label>
       <label class="set">Side light (KEEP ALL + NOTE)<select data-s="sideLight">${opt('held', settings.sideLight, 'on while held')}${opt('5s', settings.sideLight, 'on for 5 s')}${opt('toggle', settings.sideLight, 'on / off (always on)')}</select></label>
       <label class="set">Voice note format<select data-s="voiceFormat">${opt('wav', settings.voiceFormat, 'Lossless WAV 24-bit')}${opt('mr', settings.voiceFormat, 'Compressed (MediaRecorder)')}</select></label>
-      <label class="set">Microphone sound<select data-s="micMode">${opt('normal', settings.micMode, 'Normal (phone adjusts loudness)')}${opt('raw', settings.micMode, 'Raw (no gain or cleanup, quiet)')}</select></label>
+      <label class="set">Microphone sound<select data-s="micMode">${opt('normal', settings.micMode, 'Normal (phone adjusts loudness)')}${opt('call', settings.micMode, 'Call style (adds echo cancel; Android call mode)')}${opt('raw', settings.micMode, 'Raw (no gain or cleanup, quiet)')}</select></label>
       <label class="set">Which microphone<select data-s="micSource">${opt('phone', settings.micSource, 'Phone mic (earbuds stay high quality)')}${opt('bluetooth', settings.micSource, 'Bluetooth earbuds mic (call quality)')}${opt('auto', settings.micSource, 'Let the phone choose')}</select></label>
       <label class="set">Keep microphone open between notes (faster start)<input type="checkbox" data-s="keepMic" ${settings.keepMic ? 'checked' : ''}></label>
       <label class="set">Target length for kept footage<select data-s="targetMin">${[5, 10, 15, 20, 30, 60].map(v => opt(v, settings.targetMin, v + ' min')).join('')}</select></label>
@@ -2947,6 +2950,10 @@ if (typeof importScripts === 'function') {
     requestAnimationFrame(pMeterLoop);
   }
   // While NOTE is held: amber "wait" until the mic is really delivering sound, then red with a live level bar.
+  function micDesc() {
+    const i = Mic.info; if (!i) return '';
+    return ' \u00B7 ' + (i.label || 'mic') + (i.sampleRate ? ' ' + (i.sampleRate / 1000) + ' kHz' : '');
+  }
   function pMeterLoop() {
     const st = pRec, box = $('pStatus'), lv = $('pLevel');
     if (!st) { box.classList.remove('wait'); lv.hidden = true; for (const b of document.querySelectorAll('#phone .wait')) b.classList.remove('wait'); return; }
@@ -2954,7 +2961,7 @@ if (typeof importScripts === 'function') {
     if (live && !st.live) { st.live = true; haptic(40); }
     box.classList.toggle('wait', !live); st.btn.classList.toggle('wait', !live);
     const txt = live ? '\u25CF RECORDING \u00B7 talk now' : 'Mic starting\u2026 wait for red';
-    if ($('pLastText').textContent !== txt) { $('pLastText').textContent = txt; $('pLastN').textContent = ''; $('pLastSub').textContent = live ? 'let go to save' : 'keep holding'; }
+    if ($('pLastText').textContent !== txt) { $('pLastText').textContent = txt; $('pLastN').textContent = ''; $('pLastSub').textContent = live ? 'let go to save' + micDesc() : 'keep holding'; }
     if (live) {
       box.style.setProperty('--lastc', COL.red);
       const p = micPeak(); lv.hidden = false;
