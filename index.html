@@ -257,6 +257,8 @@
   .pr .prh { display: flex; align-items: stretch; }
   .pr .prh .top { flex: 1; min-width: 0; }
   .pr .pplay { flex: none; width: 56px; margin: 6px 8px 6px 0; border-radius: 12px; border: 1px solid var(--p-line); background: var(--p-btn); font-size: 22px; line-height: 1; }
+  .pr.vo { border-left-color: var(--blue); }
+  .pr.vo .lab b { color: var(--blue); }
   .pr .pplay.on { background: var(--p-on); color: var(--p-onText); }
   #pList { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; overscroll-behavior: contain;
     background: var(--p-card); border: 1px solid var(--p-line); border-radius: 14px; }
@@ -766,7 +768,7 @@ if (typeof importScripts === 'function') {
 <script>
 (() => {
   'use strict';
-  const VERSION = '2.3.3';
+  const VERSION = '2.3.4';
   const VERSION_DATE = '2026-11-17';
   const $ = id => document.getElementById(id);
   const pad = (n, w = 2) => String(n).padStart(w, '0');
@@ -2842,7 +2844,10 @@ if (typeof importScripts === 'function') {
     const sig = [session, sessionName(session), events.length, phoneSel, settings.phoneWin, settings.targetMin, recNow, playingId].join('|');
     if (!force && sig === phoneSig) return;
     phoneSig = sig;
-    const d = derive(), list = d.marks.slice().reverse(), sel = pSelMark(), tgt = pTarget();
+    const d = derive(), sel = pSelMark(), tgt = pTarget();
+    // 2.3.4: every voice note gets its own line (like marks), placed where it was recorded, newest first
+    const list = d.marks.map(m => ({ n: m.n, m })).concat(d.list.filter(e => e.type === 'voice').map(e => ({ n: e.n, v: e })))
+      .sort((a, b) => b.n - a.n);
     const sc = sceneTake(), live = d.marks.filter(m => m.live).length;
     $('pSessName').textContent = sessionName(session);
     $('pStats').textContent = `${live} mark${live === 1 ? '' : 's'} · kept ${mmss(keptSeconds())}/${settings.targetMin}:00 · SC${sc.sc} TK${sc.tk}`;
@@ -2857,7 +2862,13 @@ if (typeof importScripts === 'function') {
     $('pMarkSub').textContent = w === 'all' ? 'keep all since last' : `keep last ${durShort(w)}`;
 
     let h = list.length ? '' : '<div class="pempty">Your marks show up here, newest first.<br>Tap <b>MARK</b> right after something worth keeping.<br>Tap a mark here to tag it, add a note or delete it.</div>';
-    for (const m of list) {
+    for (const it of list) {
+      if (it.v) {
+        const e = it.v, on = d.mByN.get(e.target), playing = playingId === e.audio;
+        h += `<div class="pr vo" data-v="${e.n}"><div class="prh"><button class="top" data-a="vplay"><span class="num">${e.n}</span><span class="lab"><b>VOICE NOTE ${esc(durLong((e.end - e.start) / 1000))}</b><small>${esc(h12(e.t, true))} \u00B7 on #${e.target}${on ? ' ' + esc(markLabel(on)) : ''}</small></span></button><button class="pplay${playing ? ' on' : ''}" data-a="vplay" aria-label="${playing ? 'Stop' : 'Play'} voice note">${playing ? '&#9632;' : '&#9654;'}</button></div></div>`;
+        continue;
+      }
+      const m = it.m;
       const cls = !m.live ? 'dead' : m.isBroll ? 'br' : m.kept ? 'kept' : '';
       const open = m.n === phoneSel;
       let chips = m.tags.map(t => `<span class="chip" style="background:${COL[t]}">${TAG_ABBR[t]}</span>`).join('');
@@ -2865,8 +2876,7 @@ if (typeof importScripts === 'function') {
       if (m.voices.length) chips += `<span class="chip" style="background:var(--blue);color:#fff">VO${m.voices.length > 1 ? ' ' + m.voices.length : ''}</span>`;
       if (m.texts.length) chips += '<span class="chip" style="background:#9ca3af">TXT</span>';
       const when = h12(m.e.t, true) + (m.from != null ? ` · ${hms(m.from)} to ${hms(m.to)}` : '') + (m.live ? '' : m.deleted ? ' · deleted' : ' · undone');
-      const lastV = m.voices[m.voices.length - 1], playing = !!(lastV && playingId === lastV.audio);
-      h += `<div class="pr ${cls}${open ? ' sel' : ''}" data-n="${m.n}"><div class="prh"><button class="top" data-a="open" aria-expanded="${open}"><span class="num">${m.n}</span><span class="lab"><b>${esc(markLabel(m))}</b><small>${esc(when)}</small></span><span class="chips">${chips}</span></button>${lastV ? `<button class="pplay${playing ? ' on' : ''}" data-a="play" aria-label="${playing ? 'Stop' : 'Play'} voice note">${playing ? '&#9632;' : '&#9654;'}</button>` : ''}</div>`;
+      h += `<div class="pr ${cls}${open ? ' sel' : ''}" data-n="${m.n}"><div class="prh"><button class="top" data-a="open" aria-expanded="${open}"><span class="num">${m.n}</span><span class="lab"><b>${esc(markLabel(m))}</b><small>${esc(when)}</small></span><span class="chips">${chips}</span></button></div>`;
       if (open) {
         if (m.texts.length) h += `<div class="texts">${m.texts.map(t => '“' + esc(t) + '”').join(' ')}</div>`;
         h += '<div class="acts">';
@@ -2994,6 +3004,7 @@ if (typeof importScripts === 'function') {
     if (b.dataset.win) { settings.phoneWin = b.dataset.win === 'all' ? 'all' : +b.dataset.win; saveSettings(); haptic(15); scheduleList(); return; }
     if (b.dataset.act) { phoneAct(b.dataset.act, b, st); return; }
     const a = b.dataset.a, row = b.closest('.pr'); if (!a || !row) return;
+    if (a === 'vplay') { const e = derive().byN.get(+row.dataset.v); if (!e) return; if (playingId === e.audio) stopAudio(); else playVoice(e); haptic(10); return; }
     const m = derive().mByN.get(+row.dataset.n); if (!m) return;
     if (a === 'open') { phoneSel = phoneSel === m.n ? null : m.n; phoneScrollSel = true; haptic(10); renderPhone(true); return; }
     if (a === 'close') { phoneSel = null; renderPhone(true); return; }
