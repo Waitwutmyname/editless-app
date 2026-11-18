@@ -249,6 +249,15 @@
   #pLastText { font-size: 17px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #pLastSub { font-size: 13px; color: var(--p-muted); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   #pStatus.rec { border-left-color: var(--red); box-shadow: 0 0 0 3px var(--red); }
+  #pStatus.wait { border-left-color: #f59e0b; box-shadow: 0 0 0 3px #f59e0b; }
+  #pLevel { margin-top: 6px; height: 10px; border-radius: 5px; background: var(--p-btn); overflow: hidden; }
+  #pLevel i { display: block; height: 100%; width: 0; background: #22c55e; transition: width .05s linear; }
+  #pLevel.hot i { background: var(--red); }
+  #phone .pb.note.wait { background: #b45309; border-color: #b45309; animation: none; }
+  .pr .prh { display: flex; align-items: stretch; }
+  .pr .prh .top { flex: 1; min-width: 0; }
+  .pr .pplay { flex: none; width: 56px; margin: 6px 8px 6px 0; border-radius: 12px; border: 1px solid var(--p-line); background: var(--p-btn); font-size: 22px; line-height: 1; }
+  .pr .pplay.on { background: var(--p-on); color: var(--p-onText); }
   #pList { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; overscroll-behavior: contain;
     background: var(--p-card); border: 1px solid var(--p-line); border-radius: 14px; }
   .pr { border-bottom: 1px solid var(--p-line); border-left: 6px solid #888; }
@@ -350,7 +359,7 @@
     <div class="seg view" role="group" aria-label="View"><button data-view="remote">Remote</button><button data-view="phone" class="on">Phone</button></div>
     <button id="pMenu" aria-label="Menu">&#9776;</button>
   </header>
-  <div id="pStatus"><div class="n" id="pLastN"></div><div class="b"><div id="pLastText">Ready</div><div id="pLastSub"></div></div></div>
+  <div id="pStatus"><div class="n" id="pLastN"></div><div class="b"><div id="pLastText">Ready</div><div id="pLastSub"></div><div id="pLevel" hidden><i></i></div></div></div>
   <div id="pList"></div>
   <div id="pDock">
     <div id="pTarget"><div id="pTargetText"></div><button class="pb" id="pUndo" data-act="undo">UNDO</button><button class="pb" id="pMoreBtn" data-act="more">MORE</button></div>
@@ -757,7 +766,7 @@ if (typeof importScripts === 'function') {
 <script>
 (() => {
   'use strict';
-  const VERSION = '2.3.1';
+  const VERSION = '2.3.2';
   const VERSION_DATE = '2026-11-17';
   const $ = id => document.getElementById(id);
   const pad = (n, w = 2) => String(n).padStart(w, '0');
@@ -776,7 +785,7 @@ if (typeof importScripts === 'function') {
     settings: 'editless.v2.settings', device: 'editless.v2.device', view: 'editless.v2.view' };
   const LEGACY = { events: 'editless.events.v1', names: 'editless.sessionNames.v1' };
 
-  const DEFAULTS = { holdMs: 600, sideLight: '5s', voiceFormat: 'wav', micMode: 'normal', keepMic: true, targetMin: 10,
+  const DEFAULTS = { holdMs: 600, sideLight: '5s', voiceFormat: 'wav', micMode: 'normal', micSource: 'phone', keepMic: true, targetMin: 10,
     haptics: true, epdTiming: true, relabel: true, historyList: true, hintsSeen: {}, phoneWin: 30 };
   const settings = Object.assign({}, DEFAULTS, LS.get(KEY.settings, {}));
   const saveSettings = () => LS.set(KEY.settings, settings);
@@ -1437,12 +1446,32 @@ if (typeof importScripts === 'function') {
   }
   registerProcessor('editless-cap', EditlessCap);`;
 
-  function micConstraints() {
+  // 2.3.2: on Android, opening the default mic while AirPods or other Bluetooth earbuds are connected
+  // switches them to the low-quality "phone call" Bluetooth mode for both mic and sound. 'phone' (default)
+  // asks for the phone's own built-in mic by name so the earbuds stay in normal high-quality mode.
+  const BT_RE = /bluetooth|airpod|buds|hands-?free|\bbt\b|\bsco\b/i;
+  async function pickInput() {
+    if (settings.micSource === 'auto') return null;
+    let devs = [];
+    try { devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput'); } catch { return null; }
+    if (!devs.some(d => d.label)) return undefined;          // names hidden until the first permission
+    const real = devs.filter(d => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
+    if (settings.micSource === 'bluetooth') return (real.find(d => BT_RE.test(d.label)) || {}).deviceId || null;
+    const own = real.filter(d => !BT_RE.test(d.label));
+    return (own.find(d => /speaker|built-?in|bottom|phone/i.test(d.label)) || own.find(d => !/earpiece|wired|usb/i.test(d.label)) || own[0] || {}).deviceId || null;
+  }
+  function openMic(id) {
+    return navigator.mediaDevices.getUserMedia(micConstraints(id)).catch(e => {
+      if (id && (e.name === 'OverconstrainedError' || e.name === 'NotFoundError')) return navigator.mediaDevices.getUserMedia(micConstraints(null));
+      throw e;
+    });
+  }
+  function micConstraints(id) {
     // 2.3.1: 'normal' (default) lets the phone do its usual voice processing (auto gain, noise and
     // echo reduction) so notes come out at a normal loudness. 'raw' turns all of it off (quiet, untouched).
     const on = settings.micMode !== 'raw';
     return { audio: { echoCancellation: on, noiseSuppression: on, autoGainControl: on,
-      sampleRate: { ideal: 48000 }, sampleSize: { ideal: 24 } }, video: false };
+      sampleRate: { ideal: 48000 }, sampleSize: { ideal: 24 }, ...(id ? { deviceId: { exact: id } } : {}) }, video: false };
   }
   function getStream() {
     if (Mic.stream && Mic.stream.active) return Promise.resolve(Mic.stream);
@@ -1450,7 +1479,16 @@ if (typeof importScripts === 'function') {
     if (!navigator.mediaDevices?.getUserMedia) {
       return Promise.reject(new Error(window.isSecureContext ? 'This browser gives no microphone access' : 'Microphone needs https:// or http://localhost (see Help)'));
     }
-    Mic.pending = navigator.mediaDevices.getUserMedia(micConstraints()).then(s => {
+    Mic.pending = (async () => {
+      let id = await pickInput();
+      let s = await openMic(id);
+      if (id === undefined) {                                  // first time: pick again now the names are visible
+        id = await pickInput();
+        const cur = s.getAudioTracks()[0]?.getSettings?.().deviceId;
+        if (id && id !== cur) { s.getTracks().forEach(t => t.stop()); s = await openMic(id); }
+      }
+      return s;
+    })().then(s => {
       Mic.stream = s; Mic.pending = null; Mic.err = ''; Mic.wanted = true;
       const tr = s.getAudioTracks()[0];
       Mic.info = { ...(tr?.getSettings?.() || {}), label: tr?.label || '' };
@@ -1474,8 +1512,30 @@ if (typeof importScripts === 'function') {
     const mute = Mic.ctx.createGain(); mute.gain.value = 0;
     Mic.src.connect(Mic.node); Mic.node.connect(mute); mute.connect(Mic.ctx.destination);
   }
+  // Live input level (2.3.2), so the phone view can show when sound is really coming in.
+  function ensureMeter() {
+    const s = Mic.stream; if (!s) return;
+    if (Mic.an && Mic.anStream === s && Mic.anCtx && Mic.anCtx.state !== 'closed') return;
+    try {
+      const useWav = Mic.ctx && Mic.ctx.state !== 'closed' && Mic.src && Mic.src.mediaStream === s;
+      if (!useWav && (!Mic.mctx || Mic.mctx.state === 'closed')) Mic.mctx = new AudioContext();
+      const ctx = useWav ? Mic.ctx : Mic.mctx;
+      const src = useWav ? Mic.src : ctx.createMediaStreamSource(s);
+      Mic.an = ctx.createAnalyser(); Mic.an.fftSize = 1024; src.connect(Mic.an);
+      Mic.anStream = s; Mic.anCtx = ctx; Mic.meterBuf = new Float32Array(Mic.an.fftSize);
+      if (ctx.state !== 'running') ctx.resume().catch(() => {});
+    } catch { Mic.an = null; }
+  }
+  function micPeak() {
+    if (!Mic.an || !Mic.anCtx || Mic.anCtx.state === 'closed') return null;
+    Mic.an.getFloatTimeDomainData(Mic.meterBuf);
+    let p = 0; for (let i = 0; i < Mic.meterBuf.length; i++) { const v = Math.abs(Mic.meterBuf[i]); if (v > p) p = v; }
+    return p;
+  }
   function releaseMic() {
     if (Mic.collecting) return;
+    if (Mic.mctx) { try { Mic.mctx.close(); } catch { /* ignore */ } Mic.mctx = null; }
+    Mic.an = null; Mic.anStream = null; Mic.anCtx = null;
     try { Mic.stream?.getTracks().forEach(t => t.stop()); } catch { /* ignore */ }
     Mic.stream = null;
     if (Mic.ctx) { try { Mic.ctx.close(); } catch { /* ignore */ } Mic.ctx = null; Mic.src = null; Mic.node = null; }
@@ -1496,7 +1556,7 @@ if (typeof importScripts === 'function') {
       if (settings.voiceFormat === 'wav' && window.AudioWorkletNode) {
         await ensureWavGraph();
         if (Mic.ctx.state !== 'running') { try { await Promise.race([Mic.ctx.resume(), sleep(150)]); } catch { /* fall through */ } }
-        if (Mic.ctx.state === 'running') { h.mode = 'wav'; h.sr = Mic.ctx.sampleRate; h.start = Date.now(); Mic.collecting = h; return; }
+        if (Mic.ctx.state === 'running') { h.mode = 'wav'; h.sr = Mic.ctx.sampleRate; h.start = Date.now(); Mic.collecting = h; ensureMeter(); return; }
       }
       const s = await getStream();
       if (!window.MediaRecorder) throw new Error('No MediaRecorder in this browser');
@@ -1507,6 +1567,7 @@ if (typeof importScripts === 'function') {
       h.mr.ondataavailable = ev => { if (ev.data && ev.data.size) h.chunks.push(ev.data); };
       h.mr.start(500);
       h.start = Date.now();
+      ensureMeter();
     })().catch(err => { h.ok = false; h.err = err; });
     return h;
   }
@@ -1550,7 +1611,7 @@ if (typeof importScripts === 'function') {
     return new Blob([buf], { type: 'audio/wav' });
   }
 
-  function noteDown(st, target) {
+  function noteDown(st, target, holdMs = settings.holdMs) {
     st.target = target ? target.n : null;
     const h = st.rec = startRec(st.t);
     h.ready.then(() => {
@@ -1562,7 +1623,7 @@ if (typeof importScripts === 'function') {
       st.armed = true; setRecLight(true); haptic(50);
       setLast('', 'RECORDING…', st.target ? `Voice note on #${st.target} ${markLabel(target)} · let go to stop` : 'Voice note · let go to stop', COL.red);
       EPD.rec = true; requestDraw();
-    }, settings.holdMs));
+    }, holdMs));
   }
   async function noteUp(st, onTap) {
     const h = st.rec; st.rec = null;
@@ -2013,13 +2074,16 @@ if (typeof importScripts === 'function') {
 
   // ---------- voice tab ----------
   let audioEl = null, audioUrl = null;
-  function stopAudio() { if (audioEl) { audioEl.pause(); audioEl = null; } if (audioUrl) { URL.revokeObjectURL(audioUrl); audioUrl = null; } }
+  let playingId = null;
+  function stopAudio() { if (audioEl) { audioEl.pause(); audioEl = null; } if (audioUrl) { URL.revokeObjectURL(audioUrl); audioUrl = null; } if (playingId) { playingId = null; phoneSig = ''; scheduleList(); } }
   async function playVoice(e) {
     stopAudio();
     try {
       const r = await idbGet(e.audio); if (!r) { toast('Audio missing', 'It was deleted or never stored', true); return; }
-      audioUrl = URL.createObjectURL(r.blob); audioEl = new Audio(audioUrl);
-      await audioEl.play();
+      audioUrl = URL.createObjectURL(r.blob); const el = audioEl = new Audio(audioUrl);
+      playingId = e.audio; phoneSig = ''; scheduleList();
+      el.onended = () => { if (audioEl === el) stopAudio(); };
+      await el.play();
     } catch (err) { toast('Cannot play', err.message || String(err), true, 3000); }
   }
   async function saveVoice(e) {
@@ -2250,6 +2314,7 @@ if (typeof importScripts === 'function') {
       <label class="set">Side light (KEEP ALL + NOTE)<select data-s="sideLight">${opt('held', settings.sideLight, 'on while held')}${opt('5s', settings.sideLight, 'on for 5 s')}${opt('toggle', settings.sideLight, 'on / off (always on)')}</select></label>
       <label class="set">Voice note format<select data-s="voiceFormat">${opt('wav', settings.voiceFormat, 'Lossless WAV 24-bit')}${opt('mr', settings.voiceFormat, 'Compressed (MediaRecorder)')}</select></label>
       <label class="set">Microphone sound<select data-s="micMode">${opt('normal', settings.micMode, 'Normal (phone adjusts loudness)')}${opt('raw', settings.micMode, 'Raw (no gain or cleanup, quiet)')}</select></label>
+      <label class="set">Which microphone<select data-s="micSource">${opt('phone', settings.micSource, 'Phone mic (earbuds stay high quality)')}${opt('bluetooth', settings.micSource, 'Bluetooth earbuds mic (call quality)')}${opt('auto', settings.micSource, 'Let the phone choose')}</select></label>
       <label class="set">Keep microphone open between notes (faster start)<input type="checkbox" data-s="keepMic" ${settings.keepMic ? 'checked' : ''}></label>
       <label class="set">Target length for kept footage<select data-s="targetMin">${[5, 10, 15, 20, 30, 60].map(v => opt(v, settings.targetMin, v + ' min')).join('')}</select></label>
       <label class="set">Vibrate on key presses<input type="checkbox" data-s="haptics" ${settings.haptics ? 'checked' : ''}></label>
@@ -2266,7 +2331,7 @@ if (typeof importScripts === 'function') {
       const el = ev.target, k = el.dataset.s; if (!k) return;
       settings[k] = el.type === 'checkbox' ? el.checked : (typeof DEFAULTS[k] === 'number' ? +el.value : el.value);
       saveSettings();
-      if (k === 'voiceFormat' || k === 'keepMic' || k === 'micMode') releaseMic();
+      if (k === 'voiceFormat' || k === 'keepMic' || k === 'micMode' || k === 'micSource') releaseMic();
       if (k === 'relabel') relabel();
       if (k === 'historyList') listSig = '';
       requestDraw();
@@ -2771,7 +2836,7 @@ if (typeof importScripts === 'function') {
     const recNow = !!(pRec && pRec.armed);
     $('pNote').classList.toggle('rec', recNow && pRec.rowN == null);
     $('pStatus').classList.toggle('rec', recActive);
-    const sig = [session, sessionName(session), events.length, phoneSel, settings.phoneWin, settings.targetMin, recNow].join('|');
+    const sig = [session, sessionName(session), events.length, phoneSel, settings.phoneWin, settings.targetMin, recNow, playingId].join('|');
     if (!force && sig === phoneSig) return;
     phoneSig = sig;
     const d = derive(), list = d.marks.slice().reverse(), sel = pSelMark(), tgt = pTarget();
@@ -2797,7 +2862,8 @@ if (typeof importScripts === 'function') {
       if (m.voices.length) chips += `<span class="chip" style="background:var(--blue);color:#fff">VO${m.voices.length > 1 ? ' ' + m.voices.length : ''}</span>`;
       if (m.texts.length) chips += '<span class="chip" style="background:#9ca3af">TXT</span>';
       const when = h12(m.e.t, true) + (m.from != null ? ` · ${hms(m.from)} to ${hms(m.to)}` : '') + (m.live ? '' : m.deleted ? ' · deleted' : ' · undone');
-      h += `<div class="pr ${cls}${open ? ' sel' : ''}" data-n="${m.n}"><button class="top" data-a="open" aria-expanded="${open}"><span class="num">${m.n}</span><span class="lab"><b>${esc(markLabel(m))}</b><small>${esc(when)}</small></span><span class="chips">${chips}</span></button>`;
+      const lastV = m.voices[m.voices.length - 1], playing = !!(lastV && playingId === lastV.audio);
+      h += `<div class="pr ${cls}${open ? ' sel' : ''}" data-n="${m.n}"><div class="prh"><button class="top" data-a="open" aria-expanded="${open}"><span class="num">${m.n}</span><span class="lab"><b>${esc(markLabel(m))}</b><small>${esc(when)}</small></span><span class="chips">${chips}</span></button>${lastV ? `<button class="pplay${playing ? ' on' : ''}" data-a="play" aria-label="${playing ? 'Stop' : 'Play'} voice note">${playing ? '&#9632;' : '&#9654;'}</button>` : ''}</div>`;
       if (open) {
         if (m.texts.length) h += `<div class="texts">${m.texts.map(t => '“' + esc(t) + '”').join(' ')}</div>`;
         h += '<div class="acts">';
@@ -2806,7 +2872,7 @@ if (typeof importScripts === 'function') {
           h += `<button class="pb${m.rating ? ' on' : ''}" data-a="rate">${m.rating ? 'RATED ' + m.rating + '★' : 'RATE'}<small>${m.rating >= 3 ? 'tap: off' : `tap: ${m.rating + 1}★`}</small></button>`;
         }
         if (m.live) h += `<button class="pb note${recNow && pRec.rowN === m.n ? ' rec' : ''}" data-hold="note" data-n="${m.n}">RECORD<small>hold to talk</small></button>`;
-        if (m.voices.length) h += '<button class="pb" data-a="play">PLAY NOTE</button><button class="pb" data-a="pv">HEAR ON REMOTE</button>';
+        if (m.voices.length) h += '<button class="pb" data-a="pv">HEAR ON REMOTE</button>';
         h += '<button class="pb" data-a="text">ADD TEXT</button>';
         h += `<button class="pb${m.live ? ' danger' : ''}" data-a="del">${m.deleted ? 'UNDO DELETE' : m.undone ? 'BRING BACK' : 'DELETE'}</button>`;
         h += '<button class="pb" data-a="close">CLOSE</button></div>';
@@ -2875,7 +2941,26 @@ if (typeof importScripts === 'function') {
     const st = { id: 'PHONE', t: Date.now(), pid, timers: [], rec: null, armed: false, rowN };
     pRec = st;
     btn.classList.add('down');
-    noteDown(st, target);
+    stopAudio();
+    noteDown(st, target, 250);       // phone view: a tap does nothing else, so arm after 0.25 s
+    st.btn = btn; st.live = false;
+    requestAnimationFrame(pMeterLoop);
+  }
+  // While NOTE is held: amber "wait" until the mic is really delivering sound, then red with a live level bar.
+  function pMeterLoop() {
+    const st = pRec, box = $('pStatus'), lv = $('pLevel');
+    if (!st) { box.classList.remove('wait'); lv.hidden = true; for (const b of document.querySelectorAll('#phone .wait')) b.classList.remove('wait'); return; }
+    const h = st.rec, live = !!(h && h.ok && h.start != null);
+    if (live && !st.live) { st.live = true; haptic(40); }
+    box.classList.toggle('wait', !live); st.btn.classList.toggle('wait', !live);
+    const txt = live ? '\u25CF RECORDING \u00B7 talk now' : 'Mic starting\u2026 wait for red';
+    if ($('pLastText').textContent !== txt) { $('pLastText').textContent = txt; $('pLastN').textContent = ''; $('pLastSub').textContent = live ? 'let go to save' : 'keep holding'; }
+    if (live) {
+      box.style.setProperty('--lastc', COL.red);
+      const p = micPeak(); lv.hidden = false;
+      if (p != null) { const db = 20 * Math.log10(p + 1e-9); lv.firstChild.style.width = Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + '%'; lv.classList.toggle('hot', db > -3); }
+    }
+    requestAnimationFrame(pMeterLoop);
   }
   function phoneNoteRelease() {
     const st = pRec; if (!st) return;
@@ -2908,7 +2993,7 @@ if (typeof importScripts === 'function') {
     if (a === 'tag') tagToggle(m, b.dataset.tag, st);
     else if (a === 'rate') rateOn(m, st);
     else if (a === 'del') toggleDelete(m, st, 'tap UNDO DELETE to bring it back', 'tap DELETE to delete it again');
-    else if (a === 'play') playVoice(m.voices[m.voices.length - 1]);
+    else if (a === 'play') { const v = m.voices[m.voices.length - 1]; if (playingId === v.audio) stopAudio(); else playVoice(v); return; }
     else if (a === 'pv') openPreview(m.voices[m.voices.length - 1]);
     else if (a === 'text') addTextNote(m, 'PHONE');
     requestDraw();

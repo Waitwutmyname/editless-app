@@ -3,7 +3,7 @@
 // v2.1 (2026-11-16): remote sound preview.
 // v2.2 (2026-11-16): history list and HISTORY by holding KEEP ALL 2 s; tag keys toggle.
 // v2.3 (2026-11-17): second, phone-first view with a Remote / Phone switch (same data).
-const CACHE = 'editless-v2.3.1-2026-11-17';
+const CACHE = 'editless-v2.3.2-2026-11-17';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', e => {
