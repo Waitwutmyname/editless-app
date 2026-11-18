@@ -757,7 +757,7 @@ if (typeof importScripts === 'function') {
 <script>
 (() => {
   'use strict';
-  const VERSION = '2.3.0';
+  const VERSION = '2.3.1';
   const VERSION_DATE = '2026-11-17';
   const $ = id => document.getElementById(id);
   const pad = (n, w = 2) => String(n).padStart(w, '0');
@@ -776,7 +776,7 @@ if (typeof importScripts === 'function') {
     settings: 'editless.v2.settings', device: 'editless.v2.device', view: 'editless.v2.view' };
   const LEGACY = { events: 'editless.events.v1', names: 'editless.sessionNames.v1' };
 
-  const DEFAULTS = { holdMs: 600, sideLight: '5s', voiceFormat: 'wav', keepMic: true, targetMin: 10,
+  const DEFAULTS = { holdMs: 600, sideLight: '5s', voiceFormat: 'wav', micMode: 'normal', keepMic: true, targetMin: 10,
     haptics: true, epdTiming: true, relabel: true, historyList: true, hintsSeen: {}, phoneWin: 30 };
   const settings = Object.assign({}, DEFAULTS, LS.get(KEY.settings, {}));
   const saveSettings = () => LS.set(KEY.settings, settings);
@@ -1438,7 +1438,10 @@ if (typeof importScripts === 'function') {
   registerProcessor('editless-cap', EditlessCap);`;
 
   function micConstraints() {
-    return { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+    // 2.3.1: 'normal' (default) lets the phone do its usual voice processing (auto gain, noise and
+    // echo reduction) so notes come out at a normal loudness. 'raw' turns all of it off (quiet, untouched).
+    const on = settings.micMode !== 'raw';
+    return { audio: { echoCancellation: on, noiseSuppression: on, autoGainControl: on,
       sampleRate: { ideal: 48000 }, sampleSize: { ideal: 24 } }, video: false };
   }
   function getStream() {
@@ -2246,6 +2249,7 @@ if (typeof importScripts === 'function') {
       <label class="set">Hold time (tap vs hold)<select data-s="holdMs">${[400, 500, 600, 700, 800].map(v => opt(v, settings.holdMs, (v / 1000) + ' s' + (v === 600 ? ' (prototype)' : ''))).join('')}</select></label>
       <label class="set">Side light (KEEP ALL + NOTE)<select data-s="sideLight">${opt('held', settings.sideLight, 'on while held')}${opt('5s', settings.sideLight, 'on for 5 s')}${opt('toggle', settings.sideLight, 'on / off (always on)')}</select></label>
       <label class="set">Voice note format<select data-s="voiceFormat">${opt('wav', settings.voiceFormat, 'Lossless WAV 24-bit')}${opt('mr', settings.voiceFormat, 'Compressed (MediaRecorder)')}</select></label>
+      <label class="set">Microphone sound<select data-s="micMode">${opt('normal', settings.micMode, 'Normal (phone adjusts loudness)')}${opt('raw', settings.micMode, 'Raw (no gain or cleanup, quiet)')}</select></label>
       <label class="set">Keep microphone open between notes (faster start)<input type="checkbox" data-s="keepMic" ${settings.keepMic ? 'checked' : ''}></label>
       <label class="set">Target length for kept footage<select data-s="targetMin">${[5, 10, 15, 20, 30, 60].map(v => opt(v, settings.targetMin, v + ' min')).join('')}</select></label>
       <label class="set">Vibrate on key presses<input type="checkbox" data-s="haptics" ${settings.haptics ? 'checked' : ''}></label>
@@ -2262,7 +2266,7 @@ if (typeof importScripts === 'function') {
       const el = ev.target, k = el.dataset.s; if (!k) return;
       settings[k] = el.type === 'checkbox' ? el.checked : (typeof DEFAULTS[k] === 'number' ? +el.value : el.value);
       saveSettings();
-      if (k === 'voiceFormat' || k === 'keepMic') releaseMic();
+      if (k === 'voiceFormat' || k === 'keepMic' || k === 'micMode') releaseMic();
       if (k === 'relabel') relabel();
       if (k === 'historyList') listSig = '';
       requestDraw();
